@@ -1,0 +1,10 @@
+playwright
+trafilatura
+beautifulsoup4
+lxml
+google-generativeai
+asyncpg
+python-slugify
+python-dotenv
+tenacity
+tiktoken
