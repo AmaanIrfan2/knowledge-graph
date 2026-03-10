@@ -1,12 +1,9 @@
-"""
-Runs Gemini extraction to pull entities and relations from article body text.
-"""
-
 import json
 import logging
 import os
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import tiktoken
 
 logger = logging.getLogger(__name__)
@@ -96,18 +93,19 @@ async def extract(body_text: str) -> tuple[list[dict], list[dict]]:
     Call Gemini to extract entities and relations.
     Returns (elements, relations).
     """
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel(
-        model_name=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-        generation_config=genai.GenerationConfig(
+    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    
+    prompt = _PROMPT.format(body_text=_truncate(body_text))
+    
+    response = await client.aio.models.generate_content(
+        model=os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview"),
+        contents=prompt,
+        config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=_RESPONSE_SCHEMA,
             temperature=0.0,
-        ),
+        )
     )
-
-    prompt = _PROMPT.format(body_text=_truncate(body_text))
-    response = await model.generate_content_async(prompt)
     result = json.loads(response.text)
 
     return result.get("elements", []), result.get("relations", [])

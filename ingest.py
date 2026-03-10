@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""
-Usage:
-    python ingest.py <article_url>
-
-Scrapes the article, extracts entities and relations via Gemini,
-and stores everything in PostgreSQL.
-"""
-
 import asyncio
 import logging
 import sys

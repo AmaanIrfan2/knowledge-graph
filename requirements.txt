@@ -2,7 +2,7 @@ playwright
 trafilatura
 beautifulsoup4
 lxml
-google-generativeai
+google-genai
 asyncpg
 python-slugify
 python-dotenv

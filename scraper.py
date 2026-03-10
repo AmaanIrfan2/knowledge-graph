@@ -1,7 +1,3 @@
-"""
-Scrapes a URL using Playwright (for JS-heavy pages) and parses content with trafilatura.
-"""
-
 import json
 import logging
 import re
@@ -23,7 +19,6 @@ _BYLINE_RE = re.compile(
     r"(?:by|authors?)[:\s]+([A-Z][a-z]+(?: [A-Z][a-z]+)+)",
     re.IGNORECASE,
 )
-
 
 def extract_source_name(url: str) -> str:
     netloc = re.sub(r"^www\.", "", urlparse(url).netloc)
