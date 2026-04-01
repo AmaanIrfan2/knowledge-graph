@@ -88,24 +88,35 @@ def _truncate(text: str) -> str:
     return _tokenizer.decode(tokens[:_MAX_TOKENS])
 
 
+_PRIMARY_MODEL  = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
+_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-pro")
+
+
 async def extract(body_text: str) -> tuple[list[dict], list[dict]]:
     """
     Call Gemini to extract entities and relations.
+    Tries PRIMARY_MODEL first, falls back to FALLBACK_MODEL on any error.
     Returns (elements, relations).
     """
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-    
     prompt = _PROMPT.format(body_text=_truncate(body_text))
-    
-    response = await client.aio.models.generate_content(
-        model=os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview"),
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=_RESPONSE_SCHEMA,
-            temperature=0.0,
-        )
-    )
-    result = json.loads(response.text)
 
-    return result.get("elements", []), result.get("relations", [])
+    for model in (_PRIMARY_MODEL, _FALLBACK_MODEL):
+        try:
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=_RESPONSE_SCHEMA,
+                    temperature=0.0,
+                ),
+            )
+            result = json.loads(response.text)
+            if model != _PRIMARY_MODEL:
+                logger.warning("Used fallback model %s", model)
+            return result.get("elements", []), result.get("relations", [])
+        except Exception as e:
+            logger.warning("Model %s failed: %s — trying fallback", model, e)
+
+    raise RuntimeError(f"Both models failed: {_PRIMARY_MODEL}, {_FALLBACK_MODEL}")

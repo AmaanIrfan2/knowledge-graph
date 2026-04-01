@@ -16,8 +16,8 @@ _DATE_PATTERNS = [
 ]
 
 _BYLINE_RE = re.compile(
-    r"(?:by|authors?)[:\s]+([A-Z][a-z]+(?: [A-Z][a-z]+)+)",
-    re.IGNORECASE,
+    r"(?:by|authors?|লেখক|প্রতিবেদক)[:\s]+([\w\u0980-\u09FF][\w\u0980-\u09FF\s]{1,60})",
+    re.IGNORECASE | re.UNICODE,
 )
 
 def extract_source_name(url: str) -> str:
@@ -146,7 +146,10 @@ async def scrape(url: str) -> dict:
                 )
                 page = await context.new_page()
                 await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                await page.wait_for_load_state("networkidle", timeout=10_000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10_000)
+                except Exception:
+                    pass  # content is already loaded; ignore idle timeout
                 html = await page.content()
                 await context.close()
                 break

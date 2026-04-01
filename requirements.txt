@@ -8,3 +8,7 @@ python-slugify
 python-dotenv
 tenacity
 tiktoken
+transformers
+sentencepiece
+langdetect
+torch

@@ -14,15 +14,29 @@ async def init_db(conn: asyncpg.Connection) -> None:
     """Create tables if they don't exist."""
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS articles (
-            id          BIGSERIAL       PRIMARY KEY,
-            hash        VARCHAR(80)     NOT NULL UNIQUE,
-            source_url  TEXT            NOT NULL UNIQUE,
-            headline    TEXT            NOT NULL,
-            reporters   TEXT[]          NOT NULL DEFAULT '{}',
-            body_text   TEXT            NOT NULL,
-            media_urls  JSONB           NOT NULL DEFAULT '[]'
+            id                 BIGSERIAL    PRIMARY KEY,
+            hash               VARCHAR(80)  NOT NULL UNIQUE,
+            source_url         TEXT         NOT NULL UNIQUE,
+            headline           TEXT         NOT NULL,
+            reporters          TEXT[]       NOT NULL DEFAULT '{}',
+            body_text          TEXT         NOT NULL,
+            media_urls         JSONB        NOT NULL DEFAULT '[]',
+            language            VARCHAR(10)  NOT NULL DEFAULT 'en',
+            headline_original   TEXT,
+            body_text_original  TEXT,
+            reporters_original  TEXT[]
         )
     """)
+    # Migrate existing tables that predate the translation columns
+    for col, definition in [
+        ("language",            "VARCHAR(10) NOT NULL DEFAULT 'en'"),
+        ("headline_original",   "TEXT"),
+        ("body_text_original",  "TEXT"),
+        ("reporters_original",  "TEXT[]"),
+    ]:
+        await conn.execute(
+            f"ALTER TABLE articles ADD COLUMN IF NOT EXISTS {col} {definition}"
+        )
     await conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_articles_hash
         ON articles USING hash (hash)
@@ -76,6 +90,10 @@ async def save_article(
     body_text: str,
     reporters: list[str],
     media_urls: list[dict],
+    language: str = "en",
+    headline_original: str | None = None,
+    body_text_original: str | None = None,
+    reporters_original: list[str] | None = None,
 ) -> str:
     """
     Generate a unique hash and insert the article row. Returns the hash.
@@ -101,8 +119,10 @@ async def save_article(
 
         await conn.execute(
             """
-            INSERT INTO articles (hash, source_url, headline, reporters, body_text, media_urls)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO articles
+                (hash, source_url, headline, reporters, body_text, media_urls,
+                 language, headline_original, body_text_original, reporters_original)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             """,
             hash,
             source_url,
@@ -110,6 +130,10 @@ async def save_article(
             reporters,
             body_text,
             json.dumps(media_urls),
+            language,
+            headline_original,
+            body_text_original,
+            reporters_original,
         )
 
     return hash

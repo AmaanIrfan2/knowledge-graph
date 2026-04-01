@@ -31,6 +31,30 @@ async def run(url: str) -> None:
     article = await scraper.scrape(url)
     logger.info("Scraped: %s", article["headline"])
 
+    # 1.5. Detect language and translate if Bangla
+    from langdetect import detect, LangDetectException
+    import translator
+
+    headline_original = None
+    body_text_original = None
+    reporters_original = None
+    language = "en"
+
+    try:
+        language = detect(article["body_text"])
+    except LangDetectException:
+        pass
+
+    if language == "bn":
+        logger.info("Bangla article detected — translating to English ...")
+        headline_original = article["headline"]
+        body_text_original = article["body_text"]
+        reporters_original = article["reporters"]
+        article["headline"] = translator.translate_bn_to_en(article["headline"])
+        article["body_text"] = translator.translate_bn_to_en(article["body_text"])
+        article["reporters"] = [translator.translate_bn_to_en(r) for r in article["reporters"]]
+        logger.info("Translation complete.")
+
     # 2. Save article
     article_hash = await db.save_article(
         conn,
@@ -41,6 +65,10 @@ async def run(url: str) -> None:
         body_text=article["body_text"],
         reporters=article["reporters"],
         media_urls=article["media_urls"],
+        language=language,
+        headline_original=headline_original,
+        body_text_original=body_text_original,
+        reporters_original=reporters_original,
     )
     logger.info("Saved article: %s", article_hash)
 
