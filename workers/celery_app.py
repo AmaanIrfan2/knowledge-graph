@@ -12,6 +12,9 @@ app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    task_acks_late=True,                # ack only after task completes — prevents loss on worker shutdown
+    worker_prefetch_multiplier=1,       # prefetch 1 task per worker process — reduces lost-task window
+    task_reject_on_worker_lost=True,    # requeue task if worker process is killed mid-execution
 )
 
 

@@ -11,7 +11,8 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # NAS
-NAS_BASE_PATH = os.getenv("NAS_BASE_PATH", "/volume1/youtube-archive")
+NAS_BASE_PATH      = os.getenv("NAS_BASE_PATH", "/Volumes/Downloaded YT Videos")
+CAPTIONS_BASE_PATH = os.getenv("CAPTIONS_BASE_PATH", "/Volumes/Captions- YT Videos")
 
 # YouTube Data API
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")

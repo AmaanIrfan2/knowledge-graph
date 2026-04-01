@@ -10,6 +10,7 @@ from db.database import get_session
 from db.models import Channel, Video, Comment, RelatedVideo, LinkedArticle
 from yt_dlp.utils import DownloadError
 from scraper.ytdlp import enumerate_channel, get_video_metadata, fetch_captions, download_video, fetch_pinned_comment
+from scraper.innertube import fetch_suggested_video_ids, fetch_end_screen_video_ids
 from scraper.comments import fetch_comments
 from scraper.articles import parse_linked_articles, parse_related_videos
 from config.settings import MAX_RETRIES
@@ -40,15 +41,6 @@ def _build_internal_id(
         time_part = "000000"
 
     return f"{source}-{date_part}-{time_part}-{sequence}"
-
-
-def _parse_upload_date(upload_date: str | None) -> datetime | None:
-    if not upload_date:
-        return None
-    try:
-        return datetime.strptime(upload_date, "%Y%m%d")
-    except ValueError:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -104,21 +96,27 @@ def process_video(self, yt_video_id: str, channel_db_id: int, sequence: int) -> 
                     view_count     = meta.view_count,
                     like_count     = meta.like_count,
                     thumbnail_url  = meta.thumbnail_url,
-                    uploaded_at    = _parse_upload_date(meta.upload_date),
                     status         = "processing",
                 )
                 session.add(video)
             else:
-                video.status = "processing"
+                video.internal_id  = internal_id
+                video.title        = meta.title
+                video.description  = meta.description
+                video.duration     = meta.duration
+                video.view_count   = meta.view_count
+                video.like_count   = meta.like_count
+                video.thumbnail_url = meta.thumbnail_url
+                video.status       = "processing"
 
         # --- Phase B (captions): network call, outside session ---
         logger.info("[%s] fetching captions", yt_video_id)
         try:
-            caption_text, caption_source = fetch_captions(yt_video_id, channel_yt_id)
-            logger.info("[%s] captions: source=%s found=%s", yt_video_id, caption_source, caption_text is not None)
+            caption_path, caption_source = fetch_captions(yt_video_id, channel_yt_id)
+            logger.info("[%s] captions: source=%s found=%s", yt_video_id, caption_source, caption_path is not None)
         except Exception as exc:
             logger.warning("[%s] captions failed, continuing without: %s", yt_video_id, exc)
-            caption_text, caption_source = None, "auto"
+            caption_path, caption_source = None, "auto"
 
         # --- Phase C: download video, outside session ---
         logger.info("[%s] downloading video", yt_video_id)
@@ -127,21 +125,35 @@ def process_video(self, yt_video_id: str, channel_db_id: int, sequence: int) -> 
 
         # --- Phase D: fetch comments, outside session ---
         logger.info("[%s] fetching comments", yt_video_id)
-        comments_data = list(fetch_comments(yt_video_id))
-        logger.info("[%s] fetched %d comments", yt_video_id, len(comments_data))
+        try:
+            comments_data = list(fetch_comments(yt_video_id))
+            logger.info("[%s] fetched %d comments", yt_video_id, len(comments_data))
+        except Exception as exc:
+            logger.warning("[%s] comments failed, continuing without: %s", yt_video_id, exc)
+            comments_data = []
 
         # --- Phase E: parse description + pinned comment for articles + related videos ---
         logger.info("[%s] parsing linked articles and related videos", yt_video_id)
-        pinned_text   = fetch_pinned_comment(yt_video_id)
-        articles_data = parse_linked_articles(meta.description, found_in="description")
-        articles_data += parse_linked_articles(pinned_text, found_in="pinned-comment")
-        related_data = parse_related_videos(meta.description)
+        try:
+            pinned_text   = fetch_pinned_comment(yt_video_id)
+            articles_data = parse_linked_articles(meta.description, found_in="description")
+            articles_data += parse_linked_articles(pinned_text, found_in="pinned-comment")
+            related_data  = parse_related_videos(meta.description)
 
-        # Merge suggested videos, skipping any already captured as description-linked
-        description_linked_ids = {r["related_video_id"] for r in related_data}
-        for vid_id in meta.suggested_video_ids:
-            if vid_id not in description_linked_ids:
-                related_data.append({"related_video_id": vid_id, "relation_type": "suggested"})
+            seen_ids = {r["related_video_id"] for r in related_data}
+            for vid_id in fetch_suggested_video_ids(yt_video_id):
+                if vid_id not in seen_ids:
+                    seen_ids.add(vid_id)
+                    related_data.append({"related_video_id": vid_id, "url": f"https://www.youtube.com/watch?v={vid_id}", "relation_type": "suggested"})
+
+            for vid_id in fetch_end_screen_video_ids(yt_video_id):
+                if vid_id not in seen_ids:
+                    seen_ids.add(vid_id)
+                    related_data.append({"related_video_id": vid_id, "url": f"https://www.youtube.com/watch?v={vid_id}", "relation_type": "end-screen"})
+        except Exception as exc:
+            logger.warning("[%s] phase E failed, continuing without articles/related: %s", yt_video_id, exc)
+            articles_data = []
+            related_data  = []
 
         # --- Final update: write everything to DB ---
         with get_session() as session:
@@ -151,8 +163,8 @@ def process_video(self, yt_video_id: str, channel_db_id: int, sequence: int) -> 
                 return
             video_db_id = video.id
 
-            if caption_text:
-                video.captions = {"en": {"text": caption_text, "source": caption_source}}
+            if caption_path:
+                video.caption_nas_path = {"en": caption_path}
             if filepath:
                 video.nas_file_path = filepath
 
@@ -189,7 +201,7 @@ def process_video(self, yt_video_id: str, channel_db_id: int, sequence: int) -> 
             video = session.query(Video).filter_by(yt_video_id=yt_video_id).first()
             if video:
                 session.delete(video)
-        if "429" in msg or "Too Many Requests" in msg or "ffmpeg" in msg.lower():
+        if "429" in msg or "Too Many Requests" in msg or "ffmpeg" in msg.lower() or "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg:
             raise self.retry(exc=exc, countdown=120)
         # Video is permanently unavailable — log and discard
         logger.warning("[%s] skipping — video unavailable: %s", yt_video_id, exc)
@@ -240,6 +252,19 @@ def scrape_channel(self, channel_url: str, limit: int | None = None) -> None:
 
         new_entries = [e for e in all_entries if e.video_id not in existing_ids]
 
+        # Create "pending" records in DB *before* dispatching Celery tasks,
+        # so every video is tracked even if Celery drops the task.
+        with get_session() as session:
+            for i, entry in enumerate(new_entries, start=max_seq + 1):
+                session.add(Video(
+                    internal_id = f"pending-{entry.video_id}",
+                    yt_video_id = entry.video_id,
+                    channel_id  = channel_db_id,
+                    title       = entry.title or "(pending)",
+                    status      = "pending",
+                ))
+
+        # Now dispatch Celery tasks — if any are lost, the DB still has the record
         for i, entry in enumerate(new_entries, start=max_seq + 1):
             process_video.delay(entry.video_id, channel_db_id, i)
 

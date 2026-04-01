@@ -15,35 +15,45 @@ def _extract_urls(text: str) -> list[str]:
     return list(dict.fromkeys(_URL_RE.findall(text)))
 
 
-def _fetch_title(url: str, timeout: int = 5) -> str | None:
+def _fetch_url_info(url: str, timeout: int = 5) -> tuple[str, str | None]:
+    """Follows redirects and returns (final_url, page_title)."""
     try:
         resp = requests.get(url, timeout=timeout, allow_redirects=True, stream=True)
         resp.raise_for_status()
+        final_url = resp.url
         chunk = next(resp.iter_content(10_240), b"")
         html  = chunk.decode("utf-8", errors="ignore")
         match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-        return match.group(1).strip() if match else None
+        title = match.group(1).strip() if match else None
+        return final_url, title
     except Exception:
-        return None
+        return url, None
 
 
 def parse_linked_articles(text: str | None, found_in: str = "description") -> list[dict]:
     """
     Phase E: extract non-YouTube URLs from text (description or pinned comment).
+    Follows redirects to resolve shortened URLs (e.g. bbc.in → full URL).
     Returns list of dicts matching LinkedArticle model fields (excluding video_id FK).
     """
     if not text:
         return []
 
+    def _is_youtube(domain: str) -> bool:
+        return "youtube.com" in domain or "youtu.be" in domain
+
     articles = []
     for url in _extract_urls(text):
-        domain = urlparse(url).netloc.lstrip("www.")
-        if "youtube.com" in domain or "youtu.be" in domain:
+        if _is_youtube(urlparse(url).netloc.lstrip("www.")):
+            continue
+        final_url, title = _fetch_url_info(url)
+        final_domain = urlparse(final_url).netloc.lstrip("www.")
+        if _is_youtube(final_domain):
             continue
         articles.append({
-            "url":      url,
-            "domain":   domain,
-            "title":    _fetch_title(url),
+            "url":      final_url,
+            "domain":   final_domain,
+            "title":    title,
             "found_in": found_in,
         })
 
@@ -68,6 +78,7 @@ def parse_related_videos(description: str | None) -> list[dict]:
                 seen.add(vid_id)
                 related.append({
                     "related_video_id": vid_id,
+                    "url":              f"https://www.youtube.com/watch?v={vid_id}",
                     "relation_type":    "description-linked",
                 })
 

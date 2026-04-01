@@ -40,6 +40,12 @@ def fetch_comments(video_id: str) -> Generator[dict, None, None]:
 
     while True:
         response = requests.get(_COMMENTS_URL, params=params, timeout=10)
+        if response.status_code == 403:
+            error = response.json().get("error", {})
+            reason = (error.get("errors") or [{}])[0].get("reason", "")
+            if reason == "commentsDisabled":
+                logger.info("Comments disabled for video %s — skipping", video_id)
+                return
         response.raise_for_status()
         data = response.json()
 
@@ -51,7 +57,6 @@ def fetch_comments(video_id: str) -> Generator[dict, None, None]:
                 "comment_id":   top["id"],
                 "author":       snippet.get("authorDisplayName"),
                 "text":         snippet.get("textDisplay"),
-                "like_count":   snippet.get("likeCount", 0),
                 "reply_to":     None,
                 "published_at": _parse_dt(snippet.get("publishedAt")),
             }
@@ -62,7 +67,6 @@ def fetch_comments(video_id: str) -> Generator[dict, None, None]:
                     "comment_id":   reply["id"],
                     "author":       rs.get("authorDisplayName"),
                     "text":         rs.get("textDisplay"),
-                    "like_count":   rs.get("likeCount", 0),
                     "reply_to":     top["id"],
                     "published_at": _parse_dt(rs.get("publishedAt")),
                 }

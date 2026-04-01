@@ -21,8 +21,8 @@ Three layers: **Scraper → Processing → Storage**, with PostgreSQL as the met
 - `channel_id` (FK → channels)
 - `title`, `description`
 - `duration` (seconds), `view_count`, `like_count`
-- `thumbnail_url`, `nas_file_path`, `uploaded_at`
-- `captions` (JSONB — `{"en": {"text": "...", "source": "auto|manual"}}`)
+- `thumbnail_url`, `nas_file_path`
+- `caption_nas_path` (JSONB — `{"en": "UCxxxxxx/dQw4w9WgXcQ.en.vtt"}` — path relative to `CAPTIONS_BASE_PATH`)
 - `status` (`pending | processing | processed | failed`)
 
 **`comments`**
@@ -62,8 +62,8 @@ Uses the **yt-dlp Python API** (not subprocess).
 
 **Phase B (captions) — `fetch_captions`:**
 - Tries manual subs first, falls back to auto-generated.
-- Writes `.vtt` file to NAS alongside the video.
-- Returns `(text, source)` — source is `"manual"` or `"auto"`.
+- Writes `.vtt` file to `CAPTIONS_BASE_PATH/{channel_id}/{video_id}.{lang}.vtt` (`/Volumes/Captions- YT Videos`).
+- Returns `(relative_path, source)` — relative_path stored in `videos.caption_nas_path`, source is `"manual"` or `"auto"`.
 
 **Phase C — Video download (`download_video`):**
 - Downloads at max 1080p, merges to `.mp4`.
@@ -93,7 +93,7 @@ YouTube does **not** expose impression data via any public API or yt-dlp. Only a
 **Worker flow per video:**
 1. Check if `yt_video_id` exists in DB → skip if `status = processed`, re-queue if `failed`
 2. Fetch metadata → build `internal_id` → insert into `videos` with `status = processing`
-3. Fetch captions → update `videos.captions` JSONB
+3. Fetch captions → write `.vtt` to captions volume → update `videos.caption_nas_path` JSONB
 4. Download video to NAS → update `videos.nas_file_path`
 5. Fetch comments → bulk insert into `comments`
 6. Extract URLs from description → insert into `related_videos` and `linked_articles`
@@ -106,11 +106,14 @@ YouTube does **not** expose impression data via any public API or yt-dlp. Only a
 ## 6. NAS Storage Layout
 
 ```
-/volume1/youtube-archive/
+/Volumes/Downloaded YT Videos/          (NAS_BASE_PATH)
   └── {channel_id}/
       ├── {video_id}.mp4
-      ├── {video_id}.en.vtt       (caption file backup)
       └── {video_id}.info.json    (raw metadata backup)
+
+/Volumes/Captions- YT Videos/           (CAPTIONS_BASE_PATH)
+  └── {channel_id}/
+      └── {video_id}.{lang}.vtt   (e.g. dQw4w9WgXcQ.en.vtt)
 ```
 
 ---
@@ -138,7 +141,7 @@ YouTube does **not** expose impression data via any public API or yt-dlp. Only a
 ## Key Decisions Made
 
 - **Sync over async:** Celery workers are sync — SQLAlchemy + psycopg2, not asyncpg.
-- **Captions as JSONB on `videos`:** No separate captions table. Multi-language ready.
+- **Captions on dedicated volume:** `.vtt` files stored on `/Volumes/Captions- YT Videos`, path stored as JSONB in `videos.caption_nas_path`. Full VTT format preserved (timing + text). Multi-language ready.
 - **No SHA256 / random hashes:** All IDs are human-readable (`internal_id` format above).
 - **1080p quality cap:** `bestvideo[height<=1080]+bestaudio/best`, merged to mp4.
 - **Incremental scraping:** `last_scraped_at` per channel; only process new videos on re-runs.

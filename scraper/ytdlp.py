@@ -6,7 +6,7 @@ from typing import Generator
 
 import yt_dlp
 
-from config.settings import REQUEST_DELAY_SECONDS, NAS_BASE_PATH, VIDEO_QUALITY
+from config.settings import REQUEST_DELAY_SECONDS, NAS_BASE_PATH, CAPTIONS_BASE_PATH, VIDEO_QUALITY
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,6 @@ class VideoMetadata:
     thumbnail_url: str | None
     upload_date: str | None         # YYYYMMDD — used for ddmmyyyy in internal_id
     upload_timestamp: int | None    # unix timestamp — used for hhmmss in internal_id
-    suggested_video_ids: list[str]  # from yt-dlp's related_videos (sidebar suggestions)
 
 
 def _base_opts() -> dict:
@@ -65,10 +64,6 @@ def get_video_metadata(video_id: str) -> VideoMetadata:
         info = ydl.extract_info(url, download=False)
     time.sleep(REQUEST_DELAY_SECONDS)
 
-    suggested_video_ids = [
-        e["id"] for e in (info.get("related_videos") or []) if e.get("id")
-    ]
-
     return VideoMetadata(
         video_id=info["id"],
         yt_channel_id=info.get("channel_id", ""),
@@ -80,17 +75,17 @@ def get_video_metadata(video_id: str) -> VideoMetadata:
         thumbnail_url=info.get("thumbnail"),
         upload_date=info.get("upload_date"),
         upload_timestamp=info.get("timestamp"),
-        suggested_video_ids=suggested_video_ids,
     )
 
 
 def fetch_captions(video_id: str, channel_id: str, lang: str = "en") -> tuple[str | None, str]:
     """
-    Phase B (captions): write subtitle file to NAS, return (text, source).
+    Phase B (captions): write subtitle file to the captions volume, return (relative_path, source).
     Tries manual subs first, falls back to auto-generated.
     source is 'manual' or 'auto'. Returns (None, 'auto') on any error.
+    relative_path is relative to CAPTIONS_BASE_PATH, e.g. 'UCxxxxxx/dQw4w9WgXcQ.en.vtt'.
     """
-    output_dir = Path(NAS_BASE_PATH) / channel_id
+    output_dir = Path(CAPTIONS_BASE_PATH) / channel_id
     output_dir.mkdir(parents=True, exist_ok=True)
     cap_file = output_dir / f"{video_id}.{lang}.vtt"
 
@@ -112,7 +107,8 @@ def fetch_captions(video_id: str, channel_id: str, lang: str = "en") -> tuple[st
         time.sleep(REQUEST_DELAY_SECONDS)
 
         if cap_file.exists() and cap_file.stat().st_size > 0:
-            return cap_file.read_text(encoding="utf-8"), source
+            relative_path = str(cap_file.relative_to(CAPTIONS_BASE_PATH))
+            return relative_path, source
 
     return None, "auto"
 

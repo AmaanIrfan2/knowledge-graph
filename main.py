@@ -4,7 +4,7 @@ import sys
 
 from config.settings import setup_logging
 from db.database import init_db, get_session
-from db.models import Channel
+from db.models import Channel, Video
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -75,6 +75,46 @@ def cmd_status(_args: argparse.Namespace) -> None:
             )
 
 
+def cmd_retry(args: argparse.Namespace) -> None:
+    """Re-queue any videos stuck in pending or processing status."""
+    from workers.tasks import process_video
+
+    with get_session() as session:
+        channel = session.query(Channel).filter_by(channel_id=args.channel_id).first()
+        if not channel:
+            print(
+                f"Channel '{args.channel_id}' not found. "
+                "Register it first with: main.py add-channel"
+            )
+            sys.exit(1)
+
+        stuck = (
+            session.query(Video)
+            .filter(
+                Video.channel_id == channel.id,
+                Video.status.in_(["pending", "processing"]),
+            )
+            .all()
+        )
+
+        if not stuck:
+            print(f"No stuck videos for {channel.name}.")
+            return
+
+        channel_db_id = channel.id
+
+        # Determine sequence numbers from existing internal_ids
+        for video in stuck:
+            # Reset status to pending so process_video picks it up cleanly
+            video.status = "pending"
+
+    # Dispatch outside the session
+    for video_yt_id, seq in [(v.yt_video_id, i) for i, v in enumerate(stuck, start=1)]:
+        process_video.delay(video_yt_id, channel_db_id, seq)
+
+    print(f"Re-queued {len(stuck)} stuck video(s) for processing.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main.py",
@@ -99,6 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
     # status
     sub.add_parser("status", help="Show video processing status per channel")
 
+    # retry
+    p_retry = sub.add_parser("retry", help="Re-queue stuck (pending/processing) videos")
+    p_retry.add_argument("--channel-id", required=True, help="YouTube channel ID to retry")
+
     return parser
 
 
@@ -111,5 +155,6 @@ if __name__ == "__main__":
         "add-channel": cmd_add_channel,
         "scrape":      cmd_scrape,
         "status":      cmd_status,
+        "retry":       cmd_retry,
     }
     commands[args.command](args)

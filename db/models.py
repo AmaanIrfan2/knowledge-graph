@@ -33,11 +33,10 @@ class Video(Base):
     duration        = Column(Integer)                             # seconds
     view_count      = Column(BigInteger)
     like_count      = Column(BigInteger)
-    thumbnail_url   = Column(Text)
-    nas_file_path   = Column(Text)
-    uploaded_at     = Column(DateTime)
-    captions        = Column(JSONB)  # {"en": {"text": "...", "source": "auto|manual"}}
-    status          = Column(Text, default="pending")            # pending|processing|processed|failed
+    thumbnail_url     = Column(Text)
+    nas_file_path     = Column(Text)
+    caption_nas_path  = Column(JSONB)                            # {"en": "relative/path/to/file.en.vtt"}
+    status            = Column(Text, default="pending")          # pending|processing|processed|failed
 
     channel         = relationship("Channel", back_populates="videos")
     comments        = relationship("Comment", back_populates="video", cascade="all, delete")
@@ -52,8 +51,7 @@ class Comment(Base):
     comment_id   = Column(Text, unique=True, nullable=False)  # YouTube's comment ID
     author       = Column(Text)
     text         = Column(Text)
-    like_count   = Column(BigInteger)
-    reply_to     = Column(Text, nullable=True)                # parent comment_id if a reply
+    reply_to     = Column(Text, nullable=True)                # YouTube comment ID of parent, if a reply
     published_at = Column(DateTime)
 
     video = relationship("Video", back_populates="comments")
@@ -66,6 +64,7 @@ class RelatedVideo(Base):
     id               = Column(Integer, primary_key=True)
     video_id         = Column(Integer, ForeignKey("videos.id", ondelete="CASCADE"))
     related_video_id = Column(Text, nullable=False)           # YouTube video ID
+    url              = Column(Text)                           # https://www.youtube.com/watch?v=VIDEO_ID
     relation_type    = Column(Text)                           # suggested|end-screen|description-linked
 
     video = relationship("Video", back_populates="related_videos")
